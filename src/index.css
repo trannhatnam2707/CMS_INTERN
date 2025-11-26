@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+/* Bạn có thể thêm font chữ nếu muốn đẹp hơn */
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+}
