@@ -13,18 +13,6 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const embeddingModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
 const chatModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-// --- HÀM HELPER: Tạo Vector ---
-async function getEmbedding(text) {
-  try {
-    const cleanText = text.replace(/\n/g, " ");
-    const result = await embeddingModel.embedContent(cleanText);
-    return result.embedding.values;
-  } catch (error) {
-    console.error("Lỗi Embedding:", error);
-    return null;
-  }
-}
-
 // --- HÀM HELPER: Gửi tin nhắn lại Zalo OA ---
 async function replyToZalo(userId, text) {
   const url = "https://openapi.zalo.me/v3.0/oa/message/cs"; 
@@ -51,26 +39,38 @@ async function replyToZalo(userId, text) {
   }
 }
 
-// --- HÀM XỬ LÝ CHÍNH (HANDLER) ---
-export default async function handler(req, res) {
-  // 1. Trả lời Zalo ngay lập tức (Chống timeout)
-  res.statusCode = 200;
-  res.end('OK');
+// --- HÀM HELPER: Tạo Vector ---
+async function getEmbedding(text) {
+  try {
+    const cleanText = text.replace(/\n/g, " ");
+    const result = await embeddingModel.embedContent(cleanText);
+    return result.embedding.values;
+  } catch (error) {
+    console.error("Lỗi Embedding:", error);
+    return null;
+  }
+}
 
+// --- HÀM XỬ LÝ CHÍNH ---
+export default async function handler(req, res) {
   // Chỉ xử lý POST
-  if (req.method !== 'POST') return;
+  if (req.method !== 'POST') {
+    res.statusCode = 405;
+    res.end('Method Not Allowed');
+    return;
+  }
 
   try {
     const eventData = req.body;
     console.log("📩 Sự kiện Zalo:", eventData.event_name);
 
-    // 2. Lọc sự kiện: Chỉ xử lý khi người dùng gửi tin nhắn
+    // Chỉ xử lý tin nhắn người dùng
     if (eventData.event_name === "user_send_text") {
       const senderId = eventData.sender.id;
       const userMessage = eventData.message.text;
       console.log(`Khách ${senderId} hỏi: ${userMessage}`);
 
-      // --- LOGIC AI (Chạy ngầm sau khi đã response OK) ---
+      // --- BẮT ĐẦU XỬ LÝ AI (Đợi xong mới trả lời Zalo) ---
       
       // A. Tạo Vector
       const vector = await getEmbedding(userMessage);
@@ -110,7 +110,15 @@ export default async function handler(req, res) {
           await replyToZalo(senderId, aiReply);
       }
     }
+
+    // --- SAU KHI XỬ LÝ XONG HẾT MỚI TRẢ LỜI ZALO ---
+    res.statusCode = 200;
+    res.end('OK');
+
   } catch (error) {
     console.error("Lỗi xử lý Zalo:", error);
+    // Vẫn trả về 200 để Zalo không gửi lại tin nhắn lỗi
+    res.statusCode = 200;
+    res.end('Error Handled');
   }
 }
