@@ -1,3 +1,7 @@
+export const config = {
+  runtime: "nodejs18.x"
+};
+
 import { Pinecone } from '@pinecone-database/pinecone';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
@@ -51,7 +55,7 @@ export default async function handler(req, res) {
   // Zalo Webhook gửi sự kiện qua method POST
   if (req.method === 'POST') {
     const eventData = req.body;
-    console.log("📩 Sự kiện Zalo:", eventData.event_name);
+    console.log("Sự kiện Zalo:", eventData.event_name);
 
     // Phản hồi 200 OK ngay lập tức để Zalo không gửi lại (Retry)
     res.status(200).send('OK');
