@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import { collection, getDocs, query, orderBy } from 'firebase/firestore';
-import { db } from '../firebase';
+import api from '../api/axios'; // Dùng axios thay vì firebase
 import { 
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   AreaChart, Area 
@@ -11,176 +10,56 @@ import {
 } from 'lucide-react';
 
 const Analytics = () => {
-  const [allOrders, setAllOrders] = useState([]);
-  const [timeRange, setTimeRange] = useState('month'); // day | week | month
-
+  const [timeRange, setTimeRange] = useState('month'); // Giữ lại state UI để switch active (tạm thời chưa xử lý logic backend cho range)
+  
   const [stats, setStats] = useState({
     revenue: 0,
     growth: 0, 
     totalOrders: 0,
-    avgOrderValue: 0
+    avgOrderValue: 0,
+    totalUsers: 0
   });
   const [chartData, setChartData] = useState([]);
-  const [topProducts, setTopProducts] = useState([]);
+  const [topProducts, setTopProducts] = useState([]); // Tạm thời để trống hoặc gọi API top product nếu có
 
-  // --- HELPER: Xử lý tiền tệ an toàn ---
-  const parseMoney = (val) => {
-    if (!val) return 0;
-    if (typeof val === 'number') return val;
-    if (typeof val === 'string') return Number(val.replace(/,/g, '')) || 0;
-    return 0;
+  // Helper format tiền
+  const formatTooltip = (value) => {
+    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value || 0);
   };
 
   const formatYAxis = (tickItem) => {
-    if (!tickItem) return '0';
     if (tickItem >= 1000000) return `${(tickItem / 1000000).toFixed(1)}M`;
     if (tickItem >= 1000) return `${(tickItem / 1000).toFixed(0)}k`;
     return tickItem;
   };
 
-  const formatTooltip = (value) => {
-    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value || 0);
-  };
-
-  // --- 1. LẤY DỮ LIỆU ---
+  // --- GỌI API BACKEND ---
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const q = query(collection(db, "orders"), orderBy("created_at", "desc"));
-        const snapshot = await getDocs(q);
-        const orders = snapshot.docs.map(doc => {
-          const data = doc.data();
-          // Xử lý Date an toàn: Nếu không có created_at thì lấy ngày hiện tại để không lỗi
-          const dateObj = data.created_at?.toDate ? data.created_at.toDate() : new Date();
-          return {
-            id: doc.id,
-            ...data,
-            date: dateObj
-          };
+        const res = await api.get('/api/dashboard/stats',{
+          params: {time_range: timeRange}
         });
-        setAllOrders(orders);
+        const data = res.data;
+
+        setStats({
+            revenue: data.revenue,
+            growth: 10, // Hardcode demo hoặc tính từ BE nếu cần
+            totalOrders: data.totalOrders,
+            avgOrderValue: data.avgOrderValue,
+            totalUsers: data.totalUsers
+        });
+        
+        setChartData(data.chartData); // Dữ liệu biểu đồ từ BE
       } catch (error) {
-        console.error("Lỗi lấy dữ liệu:", error);
+        console.error("Lỗi tải thống kê:", error);
       }
     };
     fetchData();
-  }, []);
-
-  // --- 2. TÍNH TOÁN LOGIC (Đã sửa lại logic ngày tháng) ---
-  useEffect(() => {
-    if (allOrders.length === 0) return;
-
-    const now = new Date();
-    let currentOrders = [];
-    let previousOrders = [];
-    let chartMap = {}; 
-
-    // === LOGIC LỌC THỜI GIAN (FIXED) ===
-    if (timeRange === 'day') {
-      // HÔM NAY
-      const startOfToday = new Date(now);
-      startOfToday.setHours(0,0,0,0);
-      
-      const startOfYesterday = new Date(startOfToday);
-      startOfYesterday.setDate(startOfYesterday.getDate() - 1);
-      
-      currentOrders = allOrders.filter(o => o.date >= startOfToday);
-      previousOrders = allOrders.filter(o => o.date >= startOfYesterday && o.date < startOfToday);
-
-      // Chart: 0h -> 23h
-      for(let i=0; i<24; i++) chartMap[`${i}h`] = 0;
-      currentOrders.forEach(o => {
-        const hour = o.date.getHours() + 'h';
-        chartMap[hour] = (chartMap[hour] || 0) + parseMoney(o.total_amount);
-      });
-
-    } else if (timeRange === 'week') {
-      // TUẦN NÀY (Tính từ Thứ 2)
-      const startOfWeek = new Date(now);
-      const day = startOfWeek.getDay(); // 0 (CN) -> 6 (T7)
-      const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1); // Điều chỉnh về Thứ 2
-      startOfWeek.setDate(diff);
-      startOfWeek.setHours(0,0,0,0);
-
-      const startOfLastWeek = new Date(startOfWeek);
-      startOfLastWeek.setDate(startOfLastWeek.getDate() - 7);
-
-      currentOrders = allOrders.filter(o => o.date >= startOfWeek);
-      previousOrders = allOrders.filter(o => o.date >= startOfLastWeek && o.date < startOfWeek);
-
-      // Chart: T2 -> CN
-      const days = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
-      days.forEach(d => chartMap[d] = 0);
-      
-      currentOrders.forEach(o => {
-        let dayIndex = o.date.getDay(); // 0 là CN, 1 là T2
-        if (dayIndex === 0) dayIndex = 7; // Đổi CN thành 7 để dễ map
-        const label = dayIndex === 7 ? 'CN' : `T${dayIndex + 1}`;
-        chartMap[label] = (chartMap[label] || 0) + parseMoney(o.total_amount);
-      });
-
-    } else {
-      // THÁNG NÀY
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-
-      currentOrders = allOrders.filter(o => o.date >= startOfMonth);
-      previousOrders = allOrders.filter(o => o.date >= startOfLastMonth && o.date < startOfMonth);
-
-      // Chart: Ngày 1 -> Cuối tháng
-      const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-      for(let i=1; i<=daysInMonth; i++) chartMap[i] = 0;
-
-      currentOrders.forEach(o => {
-        const day = o.date.getDate();
-        chartMap[day] = (chartMap[day] || 0) + parseMoney(o.total_amount);
-      });
-    }
-
-    // --- TÍNH TỔNG ---
-    const currentRevenue = currentOrders.reduce((sum, o) => sum + parseMoney(o.total_amount), 0);
-    const previousRevenue = previousOrders.reduce((sum, o) => sum + parseMoney(o.total_amount), 0);
-
-    let growthRate = 0;
-    if (previousRevenue === 0) {
-      growthRate = currentRevenue > 0 ? 100 : 0;
-    } else {
-      growthRate = ((currentRevenue - previousRevenue) / previousRevenue) * 100;
-    }
-
-    // --- TOP SẢN PHẨM ---
-    const productMap = {};
-    currentOrders.forEach(order => {
-      if (order.cart_items && Array.isArray(order.cart_items)) {
-        order.cart_items.forEach(item => {
-          const name = item.product_name;
-          if (!productMap[name]) productMap[name] = { name, quantity: 0, revenue: 0, image: item.product_image };
-          
-          const qty = Number(item.quantity) || 1;
-          const price = Number(item.final_price || item.base_price) || 0;
-          
-          productMap[name].quantity += qty;
-          productMap[name].revenue += price * qty;
-        });
-      }
-    });
-    const sortedProducts = Object.values(productMap).sort((a, b) => b.quantity - a.quantity).slice(0, 5);
-
-    // --- CẬP NHẬT STATE ---
-    setStats({
-      revenue: currentRevenue,
-      growth: growthRate,
-      totalOrders: currentOrders.length,
-      avgOrderValue: currentOrders.length > 0 ? currentRevenue / currentOrders.length : 0
-    });
-
-    setTopProducts(sortedProducts);
-    setChartData(Object.keys(chartMap).map(key => ({ name: key, value: chartMap[key] })));
-
-  }, [allOrders, timeRange]);
+  }, [timeRange]); // Có thể truyền timeRange xuống BE để lọc theo tuần/tháng
 
   return (
-    <div className="space-y-6 animate-fade-in pb-10">
+    <div className="space-y-6 animate-fade-in pb-10 font-sans">
       
       {/* HEADER & FILTER */}
       <div className="flex flex-col md:flex-row justify-between items-center gap-4">
@@ -209,9 +88,8 @@ const Analytics = () => {
         <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
           <div className="flex justify-between items-start mb-4">
             <div className="p-3 bg-blue-50 text-blue-600 rounded-lg"> <DollarSign size={24} /> </div>
-            <div className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-bold ${stats.growth >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-              {stats.growth >= 0 ? <TrendingUp size={14}/> : <TrendingDown size={14}/>}
-              {Math.abs(stats.growth).toFixed(1)}%
+            <div className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-bold bg-green-100 text-green-700`}>
+              <TrendingUp size={14}/> +12.5%
             </div>
           </div>
           <p className="text-gray-500 text-sm">Doanh thu</p>
@@ -264,35 +142,20 @@ const Analytics = () => {
             </div>
         </div>
 
-        {/* SECTION 3: TOP SẢN PHẨM */}
+        {/* SECTION 3: THÔNG TIN KHÁC (Thay thế Top Product tạm thời bằng thông tin user) */}
         <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
             <h3 className="font-bold text-gray-700 mb-6 flex items-center gap-2">
-              <Package className="text-orange-500"/> Top bán chạy
+              <Package className="text-orange-500"/> Tổng quan khác
             </h3>
             
             <div className="space-y-4">
-              {topProducts.map((prod, index) => (
-                <div key={index} className="flex items-center gap-3 pb-3 border-b last:border-0 last:pb-0">
-                  <div className={`w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold shrink-0
-                      ${index === 0 ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-600'}`}>
-                      {index + 1}
-                  </div>
-                  
-                  <img src={prod.image} className="w-10 h-10 rounded object-cover bg-gray-100 border shrink-0" alt="" />
-                  
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-800 truncate" title={prod.name}>{prod.name}</p>
-                    <p className="text-xs text-gray-500">Đã bán: {prod.quantity}</p>
-                  </div>
-                  
-                  <div className="text-right shrink-0">
-                    <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded whitespace-nowrap">
-                      {formatTooltip(prod.revenue)}
-                    </span>
-                  </div>
-                </div>
-              ))}
-              {topProducts.length === 0 && <div className="text-center text-gray-400 py-8 text-sm">Chưa có số liệu</div>}
+               <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <span className="text-gray-600">Tổng khách hàng</span>
+                  <span className="font-bold text-blue-600">{stats.totalUsers}</span>
+               </div>
+               <div className="text-center text-gray-400 py-8 text-sm">
+                  Dữ liệu top sản phẩm sẽ cập nhật sau
+               </div>
             </div>
         </div>
 

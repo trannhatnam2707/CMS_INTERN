@@ -1,14 +1,13 @@
-import { signInWithEmailAndPassword, browserLocalPersistence, setPersistence } from 'firebase/auth'
-import { useNavigate } from 'react-router-dom'
-import { useState } from 'react'
-import { auth } from '../firebase'
-import { Lock, Mail, ArrowRight, Store } from 'lucide-react' // Nhớ import icon
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Lock, Mail, ArrowRight, Store } from 'lucide-react';
+import api from '../api/axios'; // Import axios vừa tạo
 
 const Login = () => {
-   const [email, setEmail] = useState('')
-   const [pass, setPass] = useState('')
-   const [error, setError] = useState('')
-   const [loading, setLoading] = useState(false)
+   const [email, setEmail] = useState('');
+   const [pass, setPass] = useState('');
+   const [error, setError] = useState('');
+   const [loading, setLoading] = useState(false);
    const navigate = useNavigate();
 
    const handleLogin = async (e) => {
@@ -16,35 +15,55 @@ const Login = () => {
     setLoading(true);
     setError('');
     
-    try{
-        // Ép lưu đăng nhập (F5 không mất)
-        await setPersistence(auth, browserLocalPersistence);
-        await signInWithEmailAndPassword(auth , email, pass)
-        navigate("/");
-    }
-    catch (err) {
-        setError("Email hoặc mật khẩu chưa đúng!");
+    try {
+        // Gửi Form Data theo chuẩn OAuth2 của FastAPI
+        const formData = new FormData();
+        formData.append('username', email); // FastAPI yêu cầu field là 'username'
+        formData.append('password', pass);
+
+        const res = await api.post('/api/users/auth/login', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        });
+
+        // Lưu Token
+        if (res.data.access_token) {
+            localStorage.setItem('access_token', res.data.access_token);
+            // Lưu thông tin user nếu có
+            if (res.data.user) {
+                localStorage.setItem('user_info', JSON.stringify(res.data.user));
+                
+                // Kiểm tra quyền Admin
+                if (res.data.user.role === 'admin') {
+                    navigate("/"); // Vào Dashboard
+                } else {
+                    setError("Tài khoản này không có quyền Admin!");
+                    localStorage.clear();
+                }
+            } else {
+                 navigate("/"); // Fallback nếu API không trả user object
+            }
+        }
+    } catch (err) {
+        console.error(err);
+        setError(err.response?.data?.detail || "Email hoặc mật khẩu không đúng!");
     } finally {
         setLoading(false);
     }
    }
 
   return (
-    <div className='min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-600 to-purple-700 p-4 relative overflow-hidden'>
-        
-        {/* Hình nền trang trí (Circle mờ) */}
+    <div className='min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-600 to-purple-700 p-4 relative overflow-hidden font-sans'>
+        {/* Giữ nguyên phần giao diện (UI) cũ của bạn */}
         <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-white opacity-10 rounded-full blur-3xl"></div>
         <div className="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-blue-400 opacity-20 rounded-full blur-3xl"></div>
 
-        {/* Card Login */}
         <div className='bg-white/95 backdrop-blur-sm p-8 md:p-10 rounded-2xl shadow-2xl w-full max-w-md transform transition-all hover:scale-[1.01] duration-300 border border-white/50'>
-            
             <div className="flex flex-col items-center mb-8">
                 <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-4 shadow-inner">
                     <Store size={32} strokeWidth={2.5} />
                 </div>
-                <h2 className='text-3xl font-extrabold text-gray-800'>Chào mừng trở lại</h2>
-                <p className='text-gray-500 text-sm mt-2'>Đăng nhập quản trị viên WeHappi</p>
+                <h2 className='text-3xl font-extrabold text-gray-800'>Admin Portal</h2>
+                <p className='text-gray-500 text-sm mt-2'>Đăng nhập hệ thống quản lý</p>
             </div>
 
             <form onSubmit={handleLogin} className="space-y-5">
@@ -62,7 +81,7 @@ const Login = () => {
                         </div>
                         <input 
                             type='email' 
-                            className='w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all'
+                            className='w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all'
                             placeholder="admin@example.com"
                             value={email}
                             onChange={(e) => setEmail(e.target.value)} 
@@ -79,7 +98,7 @@ const Login = () => {
                         </div>
                         <input 
                             type='password' 
-                            className='w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all'
+                            className='w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all'
                             placeholder="••••••••"
                             value={pass}
                             onChange={(e) => setPass(e.target.value)} 
@@ -90,20 +109,14 @@ const Login = () => {
 
                 <button 
                     disabled={loading}
-                    className='group w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 rounded-xl font-bold text-lg shadow-lg hover:shadow-blue-500/30 hover:from-blue-700 hover:to-blue-800 transition-all active:scale-[0.98] flex items-center justify-center gap-2'
+                    className='group w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 rounded-xl font-bold text-lg shadow-lg hover:shadow-blue-500/30 flex items-center justify-center gap-2'
                 >
-                    {loading ? 'Đang xử lý...' : (
-                        <>Đăng nhập <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" /></>
-                    )}
+                    {loading ? 'Đang xử lý...' : <>Đăng nhập <ArrowRight size={20} /></>}
                 </button>
             </form>
-            
-            <div className="mt-8 text-center text-xs text-gray-400">
-                © 2025 WeHappi System. Designed by Nam.
-            </div>
         </div>
     </div>
   )
 }
 
-export default Login
+export default Login;
