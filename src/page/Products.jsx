@@ -87,14 +87,44 @@ const Products = () => {
     }
   };
 
-  const handleGenerateAI = async () => {
-    if (!formData.ProductName) { alert("Nhập tên trước!"); return; }
+ const handleGenerateAI = async () => {
+    // 1. Bắt buộc phải có Tên
+    if (!formData.ProductName.trim()) { 
+        alert("Vui lòng nhập Tên sản phẩm trước!"); 
+        return; 
+    }
+
+    // 2. Kiểm tra xem có Mô tả (thông số) chưa
+    let promptDescription = formData.Description;
+    
+    if (!promptDescription || promptDescription.trim() === "") {
+        // Nếu chưa nhập mô tả, hỏi xác nhận
+        const confirm = window.confirm(
+            "⚠️ Bạn chưa nhập 'Mô tả chi tiết' (Thông số kỹ thuật).\n\n" +
+            "AI sẽ chỉ dựa vào Tên sản phẩm để viết nội dung, có thể không chính xác chi tiết.\n" +
+            "Bạn có muốn tiếp tục không?"
+        );
+        if (!confirm) return; // Nếu user bấm Hủy thì dừng lại để họ nhập
+        
+        promptDescription = "Chưa có thông số cụ thể, hãy viết nội dung giới thiệu chung chung dựa trên tên sản phẩm.";
+    }
+
     setIsGenerating(true);
     try {
-        const res = await api.post('/api/products/generate-marketing-content', { ProductName: formData.ProductName, Description: formData.Description || '' });
+        // 3. Gửi API (Dùng promptDescription đã xử lý)
+        const res = await api.post('/api/products/generate-marketing-content', { 
+            ProductName: formData.ProductName, 
+            Description: promptDescription 
+        });
+        
+        // 4. Nhận kết quả
         setFormData(prev => ({ ...prev, MarketingContent: res.data.content }));
-    } catch (error) { alert("Lỗi AI"); } finally { setIsGenerating(false); }
-  };
+    } catch (error) {
+        alert("Lỗi AI: " + (error.response?.data?.detail || error.message));
+    } finally {
+        setIsGenerating(false);
+    }
+};
 
   return (
     <div className="font-sans">
